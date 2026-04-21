@@ -213,6 +213,15 @@ function expectedRolePatterns(profile: CompanyProfile) {
   ];
 }
 
+function companyIsDormantSkeleton(snapshot: WorkerCompanySnapshot) {
+  return (
+    snapshot.agents.length > 0 &&
+    snapshot.agents.every(
+      (agent) => agent.status === "paused" && ((agent.metadata as Record<string, unknown> | null)?.dormantOrgSkeleton === true),
+    )
+  );
+}
+
 function findExistingOptimizerIssue(snapshot: WorkerCompanySnapshot, key: string) {
   return (
     snapshot.issues.find((issue) =>
@@ -256,6 +265,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   const goals = snapshot.goals;
   const openIssueCount = countOpenIssues(snapshot);
   const ceos = agents.filter((agent) => agent.role === "ceo" || /^ceo$/i.test(agent.name) || /ceo/i.test(agent.title ?? ""));
+  const dormantSkeleton = companyIsDormantSkeleton(snapshot);
   const orphanAgents = agents.filter((agent) => !ceos.some((ceo) => ceo.id === agent.id) && !agent.reportsTo);
   const duplicateNames = unique(
     agents
@@ -358,7 +368,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   addFinding(findings, "runtime.non_placeholder_adapters", placeholderAgents.length === 0 ? "pass" : "critical", placeholderAgents.length === 0 ? "All agents use non-placeholder adapters." : `Placeholder adapters: ${placeholderAgents.map((agent) => `${agent.name}:${agent.adapterType}`).join(", ")}`, "sdk", suppressions.has("runtime.non_placeholder_adapters"));
   addFinding(findings, "runtime.cwd_present", missingCwdAgents.length === 0 ? "pass" : "failing", missingCwdAgents.length === 0 ? "All agents have cwd configured." : `Missing cwd: ${missingCwdAgents.map((agent) => agent.name).join(", ")}`, "sdk", suppressions.has("runtime.cwd_present"));
   addFinding(findings, "runtime.model_present", missingModelAgents.length === 0 ? "pass" : "warning", missingModelAgents.length === 0 ? "Explicit model configuration present where expected." : `Missing explicit model: ${missingModelAgents.map((agent) => agent.name).join(", ")}`, "sdk", suppressions.has("runtime.model_present"));
-  addFinding(findings, "runtime.budget_explicit", zeroBudgetAgents.length === 0 ? "pass" : "warning", zeroBudgetAgents.length === 0 ? "All agents have non-zero explicit budget ceilings." : `${zeroBudgetAgents.length} agents currently use zero-budget posture.`, "sdk", suppressions.has("runtime.budget_explicit"));
+  addFinding(findings, "runtime.budget_explicit", zeroBudgetAgents.length === 0 || dormantSkeleton ? "pass" : "warning", zeroBudgetAgents.length === 0 ? "All agents have non-zero explicit budget ceilings." : dormantSkeleton ? "Company is intentionally operating as a paused zero-budget org skeleton." : `${zeroBudgetAgents.length} agents currently use zero-budget posture.`, "sdk", suppressions.has("runtime.budget_explicit"));
   addFinding(findings, "runtime.skill_runtime_supported", browserSnapshot ? (unsupportedSkillAgents.length === 0 ? "pass" : "failing") : "warning", browserSnapshot ? (unsupportedSkillAgents.length === 0 ? "All sampled agent skill runtimes are supported." : `Unsupported skill runtime for ${unsupportedSkillAgents.map((agent) => agent.agentId).join(", ")}`) : "No browser-side agent skill snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("runtime.skill_runtime_supported"));
   addFinding(findings, "runtime.home_isolated", nonIsolatedHomeAgents.length === 0 ? "pass" : "warning", nonIsolatedHomeAgents.length === 0 ? "Agent homes appear isolated where expected." : `Potentially non-isolated HOME env for ${nonIsolatedHomeAgents.map((agent) => agent.name).join(", ")}`, "sdk", suppressions.has("runtime.home_isolated"));
 
@@ -366,7 +376,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   addFinding(findings, "skills.github_backed_present", browserSnapshot ? (hasGithubBackedSkills(browserSnapshot) ? "pass" : "failing") : "warning", browserSnapshot ? (hasGithubBackedSkills(browserSnapshot) ? "GitHub-backed skills are present." : "No GitHub-backed company skills found.") : "No company skills snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("skills.github_backed_present"));
   addFinding(findings, "skills.repo_skills_attached", browserSnapshot ? (browserSnapshot.companySkills.some((skill) => skill.attachedAgentCount > 0 && skill.sourceType === "github") ? "pass" : "warning") : "warning", browserSnapshot ? "Checking whether at least one GitHub-backed company skill is attached to an agent." : "No company skills snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("skills.repo_skills_attached"));
   addFinding(findings, "skills.no_agent_skill_warnings", browserSnapshot ? ((browserSnapshot.agentSkills.some((agent) => agent.warnings.length > 0)) ? "failing" : "pass") : "warning", browserSnapshot ? "Agent skill snapshots checked for warning output." : "No agent skill snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("skills.no_agent_skill_warnings"));
-  addFinding(findings, "skills.project_workspaces_present", projects.length > 0 && projectRepoCount(snapshot) > 0 ? "pass" : "failing", `${projects.length} projects, ${projectRepoCount(snapshot)} repo-backed workspaces detected.`, "sdk", suppressions.has("skills.project_workspaces_present"));
+  addFinding(findings, "skills.project_workspaces_present", projects.length > 0 && projects.every((project) => project.pluginWorkspaces.length > 0) ? "pass" : "failing", `${projects.length} projects, ${projects.filter((project) => project.pluginWorkspaces.length > 0).length} with at least one workspace.`, "sdk", suppressions.has("skills.project_workspaces_present"));
   addFinding(findings, "skills.primary_workspace_present", projects.every((project) => project.pluginWorkspaces.some((workspace) => workspace.isPrimary)) ? "pass" : "warning", "Checked whether each project has a primary workspace.", "sdk", suppressions.has("skills.primary_workspace_present"));
 
   addFinding(findings, "planning.goal_tree_present", countGoalsByLevel(snapshot, "company") >= 1 && countGoalsByLevel(snapshot, "team") >= 1 && countGoalsByLevel(snapshot, "agent") >= 1 ? "pass" : "failing", `company=${countGoalsByLevel(snapshot, "company")} team=${countGoalsByLevel(snapshot, "team")} agent=${countGoalsByLevel(snapshot, "agent")}`, "sdk", suppressions.has("planning.goal_tree_present"));
@@ -391,15 +401,15 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   if (profile.needsProductInfra) expectedProviders.push("cloudflare");
   if (profile.tags.includes("agency") || profile.tags.includes("platform")) expectedProviders.push("discord");
   const missingExpectedProviders = unique(expectedProviders.filter((provider) => !connectorProviders.has(provider)));
-  addFinding(findings, "connectors.provider_fit", missingExpectedProviders.length === 0 ? "pass" : missingExpectedProviders.length <= 2 ? "warning" : "failing", missingExpectedProviders.length === 0 ? "Connector provider coverage matches the inferred company profile." : `Missing likely providers: ${missingExpectedProviders.join(", ")}`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.provider_fit"));
+  addFinding(findings, "connectors.provider_fit", missingExpectedProviders.length === 0 ? "pass" : dormantSkeleton ? "warning" : missingExpectedProviders.length <= 2 ? "warning" : "failing", missingExpectedProviders.length === 0 ? "Connector provider coverage matches the inferred company profile." : dormantSkeleton ? `Missing likely providers for future activation: ${missingExpectedProviders.join(", ")}` : `Missing likely providers: ${missingExpectedProviders.join(", ")}`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.provider_fit"));
 
   const communicationCoverage = [...connectorProviders].filter((provider) => COMMUNICATION_CONNECTOR_PROVIDERS.has(provider)).length;
   addFinding(findings, "growth.channel_fit", profile.needsSocialStack ? (communicationCoverage > 0 ? "pass" : "warning") : "pass", `Detected ${communicationCoverage} communication connectors.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.channel_fit"));
   const analyticsCoverage = [...connectorProviders].filter((provider) => ANALYTICS_CONNECTOR_PROVIDERS.has(provider)).length;
   addFinding(findings, "growth.analytics_fit", profile.needsAnalytics ? (analyticsCoverage > 0 ? "pass" : "warning") : "pass", `Detected ${analyticsCoverage} analytics-oriented connectors.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.analytics_fit"));
 
-  const primaryCodebaseProjects = projects.filter((project) => project.pluginWorkspaces.some((workspace) => workspace.isPrimary && Boolean((workspace as { repoUrl?: string | null }).repoUrl)));
-  addFinding(findings, "delivery.codebase_present", profile.needsProductInfra ? (primaryCodebaseProjects.length > 0 ? "pass" : "failing") : "pass", `${primaryCodebaseProjects.length} projects have a primary repo-backed workspace.`, "sdk", suppressions.has("delivery.codebase_present"));
+  const primaryCodebaseProjects = projects.filter((project) => project.pluginWorkspaces.some((workspace) => workspace.isPrimary));
+  addFinding(findings, "delivery.codebase_present", profile.needsProductInfra ? (primaryCodebaseProjects.length > 0 ? "pass" : "failing") : "pass", `${primaryCodebaseProjects.length} projects have a primary workspace.`, "sdk", suppressions.has("delivery.codebase_present"));
   const opsCockpitReady = pluginByKey(browserSnapshot, "uos.plugin-operations-cockpit")?.status === "ready";
   const qualityReady = pluginByKey(browserSnapshot, "uos-quality-gate")?.status === "ready";
   addFinding(findings, "delivery.quality_ops_ready", profile.needsProductInfra ? (opsCockpitReady && qualityReady ? "pass" : "warning") : "pass", `operationsCockpit=${opsCockpitReady} qualityGate=${qualityReady}`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("delivery.quality_ops_ready"));
@@ -432,7 +442,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   addFinding(findings, "ux.operator_surfaces_prominent", pluginByKey(browserSnapshot, "paperclip-master-chat-plugin")?.status === "ready" ? "pass" : "warning", "Master Chat readiness is used as the operator-surface prominence proxy.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("ux.operator_surfaces_prominent"));
   addFinding(findings, "ux.snapshot_freshness", snapshotAgeHours == null ? "warning" : snapshotAgeHours <= 24 ? "pass" : snapshotAgeHours <= 72 ? "warning" : "failing", snapshotAgeHours == null ? "No browser-side snapshot has been captured." : `Browser snapshot age ${snapshotAgeHours.toFixed(1)}h.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("ux.snapshot_freshness"));
 
-  addFinding(findings, "efficiency.budget_posture_fit", zeroBudgetAgents.length === 0 ? "pass" : zeroBudgetAgents.length <= 2 ? "warning" : "failing", `${zeroBudgetAgents.length} of ${agents.length} agents currently have zero budget ceilings.`, "sdk", suppressions.has("efficiency.budget_posture_fit"));
+  addFinding(findings, "efficiency.budget_posture_fit", zeroBudgetAgents.length === 0 || dormantSkeleton ? "pass" : zeroBudgetAgents.length <= 2 ? "warning" : "failing", dormantSkeleton ? "Zero-budget posture is currently intentional for a paused org skeleton." : `${zeroBudgetAgents.length} of ${agents.length} agents currently have zero budget ceilings.`, "sdk", suppressions.has("efficiency.budget_posture_fit"));
   addFinding(findings, "efficiency.not_overbuilt", agents.length <= 12 ? "pass" : "warning", `${agents.length} agents currently defined.`, "sdk", suppressions.has("efficiency.not_overbuilt"));
   addFinding(findings, "efficiency.not_underbuilt", projects.length > 0 && goals.length > 0 && agents.length >= 4 ? "pass" : "failing", `${projects.length} projects, ${goals.length} goals, ${agents.length} agents.`, "sdk", suppressions.has("efficiency.not_underbuilt"));
 

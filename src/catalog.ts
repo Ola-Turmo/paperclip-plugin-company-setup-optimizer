@@ -118,12 +118,12 @@ export const CHECK_DEFINITIONS: Record<string, OptimizationCheckDefinition> = Ob
 export function scoreAxis(statuses: CheckStatus[]) {
   if (statuses.length === 0) return 100;
   const penalty = statuses.reduce((sum, status) => {
-    if (status === "warning") return sum + 5;
-    if (status === "failing") return sum + 12;
-    if (status === "critical") return sum + 20;
+    if (status === "warning") return sum + 10;
+    if (status === "failing") return sum + 22;
+    if (status === "critical") return sum + 35;
     return sum;
   }, 0);
-  return Math.max(0, Math.min(100, Math.round(100 - penalty / statuses.length)));
+  return Math.max(0, Math.min(100, Math.round(100 - penalty / Math.max(1, statuses.length))));
 }
 
 export function buildAxisSummaries(report: Pick<CompanyOptimizationReport, "findings">): OptimizationAxisSummary[] {
@@ -162,4 +162,3 @@ export function buildScorecard(axisSummaries: OptimizationAxisSummary[]): Optimi
     compounding: scoreFor("data_learning", "skills_and_repos", "growth_surfaces"),
   };
 }
-
