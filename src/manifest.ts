@@ -3,7 +3,7 @@ import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 const manifest: PaperclipPluginManifestV1 = {
   id: "ola-turmo.paperclip-plugin-company-setup-optimizer",
   apiVersion: 1,
-  version: "0.1.0",
+  version: "0.1.1",
   displayName: "Company Setup Optimizer",
   description: "Maximum-scope Paperclip optimizer for company setup quality, activation readiness, governance, connector isolation, and issue-worthy gaps.",
   author: "Ola Turmo",

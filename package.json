@@ -1,6 +1,6 @@
 {
   "name": "@ola-turmo/paperclip-plugin-company-setup-optimizer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Paperclip plugin scaffold for world-class company setup optimization, audit scoring, and issue-worthy gap detection.",
@@ -40,4 +40,3 @@
     "react": ">=18"
   }
 }
-
