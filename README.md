@@ -30,34 +30,38 @@ It should not be a passive status widget. It should become an optimization engin
 - creates native Paperclip issues only when human intervention is actually needed
 - helps turn a merely functional Paperclip company into a world-class operating unit
 
-## Included In This Scaffold
+## What Is Implemented
 
+- live worker-side audits using the Paperclip SDK for:
+  - companies
+  - agents
+  - goals
+  - issues
+  - projects
+  - project workspaces
+- browser-side snapshot enrichment for host surfaces the worker SDK does not expose directly:
+  - plugin inventory
+  - company secrets metadata
+  - company skills
+  - agent skill snapshots
+  - connector records and warnings
+- per-axis scorecards
+- issue-worthy gap detection
+- native Paperclip issue materialization with dedupe markers
+- per-finding dismissal / suppression
+- portfolio summary page
+- daily optimizer audit job
 - maximum-optimizer PRD in [PRD.md](./PRD.md)
-- Paperclip plugin manifest scaffold
-- typed optimization axes and check catalog
-- worker routes for catalog, scorecard, and issue-candidate generation
-- dashboard widget, company page, and settings page scaffold
-- tests for catalog integrity
 
-## Current Scaffold Mode
+## Current Limits
 
-This repo currently ships the optimizer framework and a modeled report layer.
+The plugin is built and live-data-driven, but a few limits still come from the host API surface rather than missing plugin code:
 
-It does **not** yet pull every live Paperclip object into the rule engine. That is the next implementation phase. The scaffold is designed so you can progressively wire in:
+- plugin inventory, secrets metadata, company skills, connector records, and agent skill detail still require browser-side snapshots because the worker SDK does not expose them directly
+- there is no direct host API for per-widget render-failure telemetry, so plugin/UI health is inferred from plugin status, lastError, and related setup signals
+- resolved optimizer issues are not auto-closed yet because blind auto-closure is too risky without stronger operator intent and issue-state semantics
 
-- companies
-- agents
-- goals
-- projects
-- issues
-- issue docs
-- plugin registry
-- company secrets metadata
-- connector records
-- runtime health
-- dashboard rendering health
-
-## Planned Native Tools
+## Native Tools
 
 - `analyze_company_setup`
 - `summarize_company_blockers`
@@ -75,4 +79,3 @@ npm run verify
 ## Repository
 
 - GitHub: [Ola-Turmo/paperclip-plugin-company-setup-optimizer](https://github.com/Ola-Turmo/paperclip-plugin-company-setup-optimizer)
-

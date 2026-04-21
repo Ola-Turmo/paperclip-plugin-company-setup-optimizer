@@ -32,6 +32,26 @@ It should function as a high-rigor optimization engine that:
 4. distinguishes informational findings from intervention-worthy findings
 5. opens native Paperclip issues only for the latter
 
+### Current implementation status
+
+Done now:
+
+- live SDK audit for companies, agents, goals, issues, projects, and workspaces
+- typed optimization rule catalog across all major setup axes
+- per-axis and overall scoring
+- browser-side snapshot enrichment for plugins, secrets metadata, company skills, connector records, and agent skill snapshots
+- issue-worthy gap generation
+- native Paperclip issue materialization
+- finding dismissal / suppression
+- portfolio summary view
+- daily optimizer audit job
+
+Still constrained by host/API limits:
+
+- plugin inventory, secrets metadata, connector records, company skills, and agent skill detail are not exposed directly to the worker SDK, so the plugin uses browser-side snapshots for those surfaces
+- per-widget UI render failure telemetry is not directly exposed, so UI health is inferred from plugin status, lastError, and related setup signals
+- automatic closure of resolved optimizer issues is intentionally not shipped yet because the host does not provide a safe enough issue-reconciliation contract for blind closure
+
 ---
 
 ## 2. Core Promise
@@ -319,4 +339,3 @@ The plugin is ready when it can:
 ## 16. One-Sentence Internal Rule
 
 Do not reward “configured.” Reward companies that are actually ready, safe, independent, and operator-friendly.
-
