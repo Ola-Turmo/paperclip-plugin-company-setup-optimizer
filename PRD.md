@@ -51,6 +51,7 @@ Behavior refined after live portfolio use:
 
 - paused zero-budget org skeletons are not penalized as if they were already active operating companies
 - future activation account gaps on paused companies remain visible as warnings, but they no longer become native issues until the company is closer to real activation
+- connector coverage logic now treats `draft` company connections as valid planned coverage only for paused dormant companies; active companies still require real connected accounts
 - optimizer-created native issues can now be reconciled automatically when a finding stops qualifying as an issue-worthy gap
 
 Still constrained by host/API limits:

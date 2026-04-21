@@ -179,8 +179,31 @@ function hasGithubBackedSkills(snapshot: CompanyBrowserSnapshot | null) {
   return Boolean(snapshot?.companySkills.some((skill) => skill.sourceType === "github"));
 }
 
-function connectorProviderSet(snapshot: CompanyBrowserSnapshot | null) {
-  return new Set(snapshot?.connectors.connections.map((connection) => connection.providerId) ?? []);
+function connectorProviderSet(
+  snapshot: CompanyBrowserSnapshot | null,
+  allowedStatuses: string[] = ["connected"],
+) {
+  const allowed = new Set(allowedStatuses);
+  return new Set(
+    snapshot?.connectors.connections
+      .filter((connection) => allowed.has(connection.status))
+      .map((connection) => connection.providerId) ?? [],
+  );
+}
+
+function connectorCoverageEvidence(
+  snapshot: CompanyBrowserSnapshot | null,
+  providerIds: string[],
+  allowedStatuses: string[],
+) {
+  const allowed = new Set(allowedStatuses);
+  const matched = snapshot?.connectors.connections.filter(
+    (connection) => providerIds.includes(connection.providerId) && allowed.has(connection.status),
+  ) ?? [];
+  return {
+    providerCount: new Set(matched.map((connection) => connection.providerId)).size,
+    statuses: matched.map((connection) => `${connection.providerId}:${connection.status}`),
+  };
 }
 
 function issueTitleExists(snapshot: WorkerCompanySnapshot, title: string) {
@@ -401,7 +424,8 @@ function evaluateCompany(
   addFinding(findings, "governance.approval_matrix_exists", issueTitleExists(snapshot, "Approval Matrix and High-Stakes Rules") ? "pass" : "critical", issueTitleExists(snapshot, "Approval Matrix and High-Stakes Rules") ? "Approval matrix issue exists." : "Approval matrix issue missing.", "sdk", suppressions.has("governance.approval_matrix_exists"));
   addFinding(findings, "governance.regulated_review_strength", profile.needsQualityGate ? (pluginByKey(browserSnapshot, "uos-quality-gate")?.status === "ready" ? "pass" : "failing") : "pass", profile.needsQualityGate ? `Quality Gate plugin status: ${pluginByKey(browserSnapshot, "uos-quality-gate")?.status ?? "unknown"}` : "Company does not currently infer as requiring stronger regulated review.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("governance.regulated_review_strength"));
 
-  const connectorProviders = connectorProviderSet(browserSnapshot);
+  const connectorStatusesForCoverage = dormantSkeleton ? ["connected", "draft"] : ["connected"];
+  const connectorProviders = connectorProviderSet(browserSnapshot, connectorStatusesForCoverage);
   addFinding(findings, "connectors.snapshot_present", browserSnapshot ? "pass" : "warning", browserSnapshot ? `Browser snapshot captured ${browserSnapshot.capturedAt}.` : "No browser snapshot captured yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.snapshot_present"));
   addFinding(findings, "connectors.github_present", connectorProviders.has("github") ? "pass" : "failing", connectorProviders.has("github") ? "GitHub connector is present." : "GitHub connector is missing.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.github_present"));
   addFinding(findings, "connectors.records_clear", browserSnapshot ? ((browserSnapshot.connectors.summary?.warnings.length ?? 0) === 0 ? "pass" : "failing") : "warning", browserSnapshot ? `Connector warnings: ${browserSnapshot.connectors.summary?.warnings.join("; ") || "none"}` : "No connector snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.records_clear"));
@@ -415,18 +439,18 @@ function evaluateCompany(
   const missingExpectedProviders = unique(expectedProviders.filter((provider) => !connectorProviders.has(provider)));
   addFinding(findings, "connectors.provider_fit", missingExpectedProviders.length === 0 ? "pass" : dormantSkeleton ? "warning" : missingExpectedProviders.length <= 2 ? "warning" : "failing", missingExpectedProviders.length === 0 ? "Connector provider coverage matches the inferred company profile." : dormantSkeleton ? `Missing likely providers for future activation: ${missingExpectedProviders.join(", ")}` : `Missing likely providers: ${missingExpectedProviders.join(", ")}`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("connectors.provider_fit"));
 
-  const communicationCoverage = [...connectorProviders].filter((provider) => COMMUNICATION_CONNECTOR_PROVIDERS.has(provider)).length;
-  addFinding(findings, "growth.channel_fit", profile.needsSocialStack ? (communicationCoverage > 0 ? "pass" : "warning") : "pass", `Detected ${communicationCoverage} communication connectors.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.channel_fit"));
-  const analyticsCoverage = [...connectorProviders].filter((provider) => ANALYTICS_CONNECTOR_PROVIDERS.has(provider)).length;
-  addFinding(findings, "growth.analytics_fit", profile.needsAnalytics ? (analyticsCoverage > 0 ? "pass" : "warning") : "pass", `Detected ${analyticsCoverage} analytics-oriented connectors.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.analytics_fit"));
+  const communicationCoverage = connectorCoverageEvidence(browserSnapshot, [...COMMUNICATION_CONNECTOR_PROVIDERS], connectorStatusesForCoverage);
+  addFinding(findings, "growth.channel_fit", profile.needsSocialStack ? (communicationCoverage.providerCount > 0 ? "pass" : "warning") : "pass", `Detected ${communicationCoverage.providerCount} communication connectors via statuses ${connectorStatusesForCoverage.join(", ")}${communicationCoverage.statuses.length ? ` (${communicationCoverage.statuses.join(", ")})` : ""}.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.channel_fit"));
+  const analyticsCoverage = connectorCoverageEvidence(browserSnapshot, [...ANALYTICS_CONNECTOR_PROVIDERS], connectorStatusesForCoverage);
+  addFinding(findings, "growth.analytics_fit", profile.needsAnalytics ? (analyticsCoverage.providerCount > 0 ? "pass" : "warning") : "pass", `Detected ${analyticsCoverage.providerCount} analytics-oriented connectors via statuses ${connectorStatusesForCoverage.join(", ")}${analyticsCoverage.statuses.length ? ` (${analyticsCoverage.statuses.join(", ")})` : ""}.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("growth.analytics_fit"));
 
   const primaryCodebaseProjects = projects.filter((project) => project.pluginWorkspaces.some((workspace) => workspace.isPrimary));
   addFinding(findings, "delivery.codebase_present", profile.needsProductInfra ? (primaryCodebaseProjects.length > 0 ? "pass" : "failing") : "pass", `${primaryCodebaseProjects.length} projects have a primary workspace.`, "sdk", suppressions.has("delivery.codebase_present"));
   const opsCockpitReady = pluginByKey(browserSnapshot, "uos.plugin-operations-cockpit")?.status === "ready";
   const qualityReady = pluginByKey(browserSnapshot, "uos-quality-gate")?.status === "ready";
   addFinding(findings, "delivery.quality_ops_ready", profile.needsProductInfra ? (opsCockpitReady && qualityReady ? "pass" : "warning") : "pass", `operationsCockpit=${opsCockpitReady} qualityGate=${qualityReady}`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("delivery.quality_ops_ready"));
-  const platformCoverage = [...connectorProviders].filter((provider) => PLATFORM_CONNECTOR_PROVIDERS.has(provider)).length;
-  addFinding(findings, "delivery.platform_accounts_fit", profile.needsProductInfra ? (platformCoverage > 0 ? "pass" : "warning") : "pass", `Detected ${platformCoverage} platform/account connectors.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("delivery.platform_accounts_fit"));
+  const platformCoverage = connectorCoverageEvidence(browserSnapshot, [...PLATFORM_CONNECTOR_PROVIDERS], connectorStatusesForCoverage);
+  addFinding(findings, "delivery.platform_accounts_fit", profile.needsProductInfra ? (platformCoverage.providerCount > 0 ? "pass" : "warning") : "pass", `Detected ${platformCoverage.providerCount} platform/account connectors via statuses ${connectorStatusesForCoverage.join(", ")}${platformCoverage.statuses.length ? ` (${platformCoverage.statuses.join(", ")})` : ""}.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("delivery.platform_accounts_fit"));
 
   addFinding(findings, "safety.regulated_controls_fit", profile.tags.includes("regulated") ? (qualityReady ? "pass" : "failing") : "pass", profile.tags.includes("regulated") ? `Regulated company quality gate status=${qualityReady}` : "Company is not inferred as regulated.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("safety.regulated_controls_fit"));
   addFinding(findings, "safety.secret_isolation_fit", browserSnapshot ? (browserSnapshot.secrets.length > 0 ? "pass" : "failing") : "warning", browserSnapshot ? "Using company-scoped secret metadata presence as safety proxy." : "No secret snapshot yet.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("safety.secret_isolation_fit"));
