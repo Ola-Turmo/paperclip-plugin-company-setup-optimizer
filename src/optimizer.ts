@@ -179,7 +179,7 @@ function hasGithubBackedSkills(snapshot: CompanyBrowserSnapshot | null) {
   return Boolean(snapshot?.companySkills.some((skill) => skill.sourceType === "github"));
 }
 
-function connectorProviderSet(
+export function connectorProviderSet(
   snapshot: CompanyBrowserSnapshot | null,
   allowedStatuses: string[] = ["connected"],
 ) {
@@ -191,7 +191,7 @@ function connectorProviderSet(
   );
 }
 
-function connectorCoverageEvidence(
+export function connectorCoverageEvidence(
   snapshot: CompanyBrowserSnapshot | null,
   providerIds: string[],
   allowedStatuses: string[],
@@ -204,6 +204,17 @@ function connectorCoverageEvidence(
     providerCount: new Set(matched.map((connection) => connection.providerId)).size,
     statuses: matched.map((connection) => `${connection.providerId}:${connection.status}`),
   };
+}
+
+export function shouldIncludeIssueCandidate(
+  finding: Pick<OptimizationFinding, "id" | "status" | "issueWhenHumanActionNeeded" | "suppressed">,
+  dormantSkeleton: boolean,
+) {
+  if (finding.suppressed || finding.status === "pass" || !finding.issueWhenHumanActionNeeded) return false;
+  if (dormantSkeleton && finding.status === "warning" && DORMANT_FUTURE_ACTIVATION_ADVISORY_IDS.has(finding.id)) {
+    return false;
+  }
+  return true;
 }
 
 function issueTitleExists(snapshot: WorkerCompanySnapshot, title: string) {
@@ -485,13 +496,7 @@ function evaluateCompany(
   const axisSummaries = buildAxisSummaries({ findings });
   const scorecard = buildScorecard(axisSummaries);
   const issueCandidates: SetupIssueCandidate[] = findings
-    .filter((finding) => {
-      if (finding.suppressed || finding.status === "pass" || !finding.issueWhenHumanActionNeeded) return false;
-      if (dormantSkeleton && finding.status === "warning" && DORMANT_FUTURE_ACTIVATION_ADVISORY_IDS.has(finding.id)) {
-        return false;
-      }
-      return true;
-    })
+    .filter((finding) => shouldIncludeIssueCandidate(finding, dormantSkeleton))
     .map((finding) => {
       const existing = findExistingOptimizerIssue(snapshot, finding.id);
       return {
