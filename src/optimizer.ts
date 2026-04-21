@@ -25,6 +25,13 @@ const ACTIVATION_ISSUE_TITLES = [
   "First Safe Activation Sequence",
 ];
 
+const DORMANT_FUTURE_ACTIVATION_ADVISORY_IDS = new Set([
+  "connectors.provider_fit",
+  "growth.channel_fit",
+  "growth.analytics_fit",
+  "delivery.platform_accounts_fit",
+]);
+
 const COMMUNICATION_CONNECTOR_PROVIDERS = new Set([
   "gmail",
   "instagram",
@@ -454,7 +461,13 @@ function evaluateCompany(
   const axisSummaries = buildAxisSummaries({ findings });
   const scorecard = buildScorecard(axisSummaries);
   const issueCandidates: SetupIssueCandidate[] = findings
-    .filter((finding) => !finding.suppressed && finding.status !== "pass" && finding.issueWhenHumanActionNeeded)
+    .filter((finding) => {
+      if (finding.suppressed || finding.status === "pass" || !finding.issueWhenHumanActionNeeded) return false;
+      if (dormantSkeleton && finding.status === "warning" && DORMANT_FUTURE_ACTIVATION_ADVISORY_IDS.has(finding.id)) {
+        return false;
+      }
+      return true;
+    })
     .map((finding) => {
       const existing = findExistingOptimizerIssue(snapshot, finding.id);
       return {

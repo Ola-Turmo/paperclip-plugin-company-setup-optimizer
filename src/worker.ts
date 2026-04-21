@@ -87,6 +87,41 @@ async function upsertOptimizerIssue(ctx: PluginContext, companyId: string, candi
   });
 }
 
+async function reconcileMaterializedIssues(
+  ctx: PluginContext,
+  companyId: string,
+  report: Awaited<ReturnType<typeof analyzeCompany>>,
+) {
+  const state = await loadCompanyOptimizerState(ctx, companyId);
+  const activeCandidateKeys = new Set(report.issueCandidates.map((candidate) => candidate.key));
+  const resolved: Array<{ key: string; issueId: string }> = [];
+
+  for (const [key, issueId] of Object.entries(state.materializedIssues)) {
+    if (activeCandidateKeys.has(key)) continue;
+    try {
+      await ctx.issues.update(
+        issueId,
+        {
+          status: "done",
+        },
+        companyId,
+      );
+      delete state.materializedIssues[key];
+      resolved.push({ key, issueId });
+    } catch (error) {
+      ctx.logger.warn("Failed to reconcile stale optimizer issue", {
+        companyId,
+        key,
+        issueId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  await saveCompanyOptimizerState(ctx, companyId, state);
+  return resolved;
+}
+
 async function registerData(ctx: PluginContext) {
   ctx.data.register("optimizerCatalog", async () => ({
     axisLabels: AXIS_LABELS,
@@ -221,10 +256,25 @@ async function registerActions(ctx: PluginContext) {
       created.push({ key: candidate.key, issueId: issue.id, identifier: issue.identifier });
     }
     await saveCompanyOptimizerState(ctx, companyId, state);
+    const resolved = await reconcileMaterializedIssues(ctx, companyId, report);
     return {
       companyId,
       created,
+      resolved,
       total: created.length,
+    };
+  });
+
+  ctx.actions.register("reconcileMaterializedIssues", async (params) => {
+    const payload = params as Record<string, unknown>;
+    const companyId = requireCompanyId(payload);
+    const config = await loadOptimizerConfig(ctx);
+    const report = await analyzeCompany(ctx, companyId, config);
+    const resolved = await reconcileMaterializedIssues(ctx, companyId, report);
+    return {
+      companyId,
+      resolved,
+      total: resolved.length,
     };
   });
 }
@@ -245,6 +295,7 @@ async function registerJobs(ctx: PluginContext) {
           state.materializedIssues[candidate.key] = issue.id;
         }
         await saveCompanyOptimizerState(ctx, company.id, state);
+        await reconcileMaterializedIssues(ctx, company.id, report);
       }
     }
     ctx.logger.info("Completed daily optimizer audit", {

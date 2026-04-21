@@ -42,15 +42,22 @@ Done now:
 - browser-side snapshot enrichment for plugins, secrets metadata, company skills, connector records, and agent skill snapshots
 - issue-worthy gap generation
 - native Paperclip issue materialization
+- stale optimizer issue reconciliation when a finding is no longer issue-worthy
 - finding dismissal / suppression
 - portfolio summary view
 - daily optimizer audit job
+
+Behavior refined after live portfolio use:
+
+- paused zero-budget org skeletons are not penalized as if they were already active operating companies
+- future activation account gaps on paused companies remain visible as warnings, but they no longer become native issues until the company is closer to real activation
+- optimizer-created native issues can now be reconciled automatically when a finding stops qualifying as an issue-worthy gap
 
 Still constrained by host/API limits:
 
 - plugin inventory, secrets metadata, connector records, company skills, and agent skill detail are not exposed directly to the worker SDK, so the plugin uses browser-side snapshots for those surfaces
 - per-widget UI render failure telemetry is not directly exposed, so UI health is inferred from plugin status, lastError, and related setup signals
-- automatic closure of resolved optimizer issues is intentionally not shipped yet because the host does not provide a safe enough issue-reconciliation contract for blind closure
+- plugin inventory, connector records, and richer operator-UX telemetry still depend on browser-side snapshots until the worker SDK exposes those surfaces directly
 
 ---
 
