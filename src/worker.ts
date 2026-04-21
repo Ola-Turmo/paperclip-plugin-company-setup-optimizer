@@ -2,7 +2,7 @@ import { definePlugin, runWorker, type PluginContext, type ToolResult } from "@p
 import { analyzeCompany, analyzePortfolio, buildIssueDescription } from "./optimizer.js";
 import { AXIS_LABELS, CHECK_DEFINITIONS } from "./catalog.js";
 import { loadBrowserSnapshot, loadCompanyOptimizerState, saveBrowserSnapshot, saveCompanyOptimizerState } from "./state.js";
-import type { CompanyBrowserSnapshot, SetupIssueCandidate } from "./types.js";
+import type { CompanyBrowserSnapshot, OptimizerConfig, SetupIssueCandidate } from "./types.js";
 
 function requireCompanyId(input: Record<string, unknown>) {
   const companyId = typeof input.companyId === "string" ? input.companyId.trim() : "";
@@ -12,6 +12,20 @@ function requireCompanyId(input: Record<string, unknown>) {
 
 function normalizeString(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function loadOptimizerConfig(ctx: PluginContext): Promise<OptimizerConfig> {
+  const config = await ctx.config.get();
+  return {
+    snapshotStaleHours: typeof config.snapshotStaleHours === "number" ? config.snapshotStaleHours : 24,
+    autoIssueThreshold:
+      config.autoIssueThreshold === "critical" || config.autoIssueThreshold === "high" || config.autoIssueThreshold === "off"
+        ? config.autoIssueThreshold
+        : "off",
+    issueTitlePrefix: typeof config.issueTitlePrefix === "string" && config.issueTitlePrefix.trim()
+      ? config.issueTitlePrefix.trim()
+      : "[Setup Optimizer]",
+  };
 }
 
 function parseSnapshot(value: unknown, companyId: string): CompanyBrowserSnapshot {
@@ -40,7 +54,8 @@ function shouldMaterialize(candidate: SetupIssueCandidate, threshold: SetupIssue
 }
 
 async function upsertOptimizerIssue(ctx: PluginContext, companyId: string, candidate: SetupIssueCandidate) {
-  const report = await analyzeCompany(ctx, companyId);
+  const config = await loadOptimizerConfig(ctx);
+  const report = await analyzeCompany(ctx, companyId, config);
   const existing = report.issueCandidates.find((item) => item.key === candidate.key)?.existingIssueId;
   const company = await ctx.companies.get(companyId);
   if (!company) throw new Error("Company not found");
@@ -79,7 +94,12 @@ async function registerData(ctx: PluginContext) {
   }));
 
   ctx.data.register("portfolioOptimizationSummary", async () => {
-    return await analyzePortfolio(ctx);
+    const config = await loadOptimizerConfig(ctx);
+    return await analyzePortfolio(ctx, config);
+  });
+
+  ctx.data.register("optimizerConfig", async () => {
+    return await loadOptimizerConfig(ctx);
   });
 
   ctx.data.register("companyBrowserSnapshotStatus", async (params) => {
@@ -99,12 +119,14 @@ async function registerData(ctx: PluginContext) {
 
   ctx.data.register("companyOptimizationReport", async (params) => {
     const companyId = requireCompanyId(params as Record<string, unknown>);
-    return await analyzeCompany(ctx, companyId);
+    const config = await loadOptimizerConfig(ctx);
+    return await analyzeCompany(ctx, companyId, config);
   });
 
   ctx.data.register("companyOptimizationBlockers", async (params) => {
     const companyId = requireCompanyId(params as Record<string, unknown>);
-    const report = await analyzeCompany(ctx, companyId);
+    const config = await loadOptimizerConfig(ctx);
+    const report = await analyzeCompany(ctx, companyId, config);
     return {
       companyId,
       blockers: report.issueCandidates.filter((candidate) => candidate.blocksActivation),
@@ -160,7 +182,8 @@ async function registerActions(ctx: PluginContext) {
 
   ctx.actions.register("runCompanyAnalysis", async (params) => {
     const companyId = requireCompanyId(params as Record<string, unknown>);
-    return await analyzeCompany(ctx, companyId);
+    const config = await loadOptimizerConfig(ctx);
+    return await analyzeCompany(ctx, companyId, config);
   });
 
   ctx.actions.register("materializeIssueCandidate", async (params) => {
@@ -168,7 +191,8 @@ async function registerActions(ctx: PluginContext) {
     const companyId = requireCompanyId(payload);
     const key = normalizeString(payload.key);
     if (!key) throw new Error("key is required");
-    const report = await analyzeCompany(ctx, companyId);
+    const config = await loadOptimizerConfig(ctx);
+    const report = await analyzeCompany(ctx, companyId, config);
     const candidate = report.issueCandidates.find((item) => item.key === key);
     if (!candidate) throw new Error(`Issue candidate '${key}' not found`);
     const issue = await upsertOptimizerIssue(ctx, companyId, candidate);
@@ -186,7 +210,8 @@ async function registerActions(ctx: PluginContext) {
     const payload = params as Record<string, unknown>;
     const companyId = requireCompanyId(payload);
     const threshold = (normalizeString(payload.threshold) as SetupIssueCandidate["severity"] | undefined) ?? "high";
-    const report = await analyzeCompany(ctx, companyId);
+    const config = await loadOptimizerConfig(ctx);
+    const report = await analyzeCompany(ctx, companyId, config);
     const candidates = report.issueCandidates.filter((candidate) => shouldMaterialize(candidate, threshold));
     const created = [];
     const state = await loadCompanyOptimizerState(ctx, companyId);
@@ -206,7 +231,22 @@ async function registerActions(ctx: PluginContext) {
 
 async function registerJobs(ctx: PluginContext) {
   ctx.jobs.register("daily-optimizer-audit", async (_job) => {
-    const portfolio = await analyzePortfolio(ctx);
+    const config = await loadOptimizerConfig(ctx);
+    const portfolio = await analyzePortfolio(ctx, config);
+    if (config.autoIssueThreshold !== "off") {
+      const autoThreshold: Exclude<OptimizerConfig["autoIssueThreshold"], "off"> = config.autoIssueThreshold;
+      const companies = await ctx.companies.list({ limit: 100, offset: 0 });
+      for (const company of companies) {
+        const report = await analyzeCompany(ctx, company.id, config);
+        const candidates = report.issueCandidates.filter((candidate) => shouldMaterialize(candidate, autoThreshold));
+        const state = await loadCompanyOptimizerState(ctx, company.id);
+        for (const candidate of candidates) {
+          const issue = await upsertOptimizerIssue(ctx, company.id, candidate);
+          state.materializedIssues[candidate.key] = issue.id;
+        }
+        await saveCompanyOptimizerState(ctx, company.id, state);
+      }
+    }
     ctx.logger.info("Completed daily optimizer audit", {
       companies: portfolio.companies.length,
       worstCompany: portfolio.companies.sort((left, right) => left.overallScore - right.overallScore)[0]?.companyName ?? null,
@@ -231,7 +271,8 @@ async function registerTools(ctx: PluginContext) {
       const payload = params as { companyId?: string };
       const companyId = payload.companyId ?? runCtx.companyId;
       if (!companyId) return { error: "companyId is required" };
-      const report = await analyzeCompany(ctx, companyId);
+      const config = await loadOptimizerConfig(ctx);
+      const report = await analyzeCompany(ctx, companyId, config);
       return {
         content: `Overall ${report.scorecard.overall}/100. ${report.issueCandidates.length} issue-worthy gaps, ${report.issueCandidates.filter((item) => item.blocksActivation).length} activation blockers.`,
         data: report,
@@ -255,7 +296,8 @@ async function registerTools(ctx: PluginContext) {
       const payload = params as { companyId?: string };
       const companyId = payload.companyId ?? runCtx.companyId;
       if (!companyId) return { error: "companyId is required" };
-      const report = await analyzeCompany(ctx, companyId);
+      const config = await loadOptimizerConfig(ctx);
+      const report = await analyzeCompany(ctx, companyId, config);
       const blockers = report.issueCandidates.filter((item) => item.blocksActivation);
       return {
         content: blockers.length
@@ -282,7 +324,8 @@ async function registerTools(ctx: PluginContext) {
       const payload = params as { companyId?: string };
       const companyId = payload.companyId ?? runCtx.companyId;
       if (!companyId) return { error: "companyId is required" };
-      const report = await analyzeCompany(ctx, companyId);
+      const config = await loadOptimizerConfig(ctx);
+      const report = await analyzeCompany(ctx, companyId, config);
       const blockers = report.issueCandidates.filter((item) => item.blocksActivation);
       return {
         content: blockers.length
@@ -318,7 +361,8 @@ async function registerTools(ctx: PluginContext) {
       const payload = params as { companyId?: string; key?: string };
       const companyId = payload.companyId ?? runCtx.companyId;
       if (!companyId || !payload.key) return { error: "companyId and key are required" };
-      const report = await analyzeCompany(ctx, companyId);
+      const config = await loadOptimizerConfig(ctx);
+      const report = await analyzeCompany(ctx, companyId, config);
       const candidate = report.issueCandidates.find((item) => item.key === payload.key);
       if (!candidate) return { error: `Issue candidate '${payload.key}' not found.` };
       const issue = await upsertOptimizerIssue(ctx, companyId, candidate);

@@ -8,6 +8,7 @@ import type {
   CompanyOptimizationReport,
   CompanyProfile,
   OptimizationFinding,
+  OptimizerConfig,
   SetupIssueCandidate,
   WorkerCompanySnapshot,
 } from "./types.js";
@@ -252,7 +253,11 @@ function addFinding(
   });
 }
 
-function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<ReturnType<typeof loadCompanyOptimizerState>>): CompanyOptimizationReport {
+function evaluateCompany(
+  snapshot: WorkerCompanySnapshot,
+  companyState: Awaited<ReturnType<typeof loadCompanyOptimizerState>>,
+  config: OptimizerConfig,
+): CompanyOptimizationReport {
   const profile = inferCompanyProfile(snapshot.company);
   const findings: OptimizationFinding[] = [];
   const suppressions = new Set(companyState.suppressedFindingIds);
@@ -440,7 +445,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
 
   addFinding(findings, "ux.operator_navigation_fit", snapshot.company.logoUrl && snapshot.company.brandColor && snapshot.company.issuePrefix ? "pass" : "warning", "Using company branding and prefix presence as navigation clarity proxy.", "sdk", suppressions.has("ux.operator_navigation_fit"));
   addFinding(findings, "ux.operator_surfaces_prominent", pluginByKey(browserSnapshot, "paperclip-master-chat-plugin")?.status === "ready" ? "pass" : "warning", "Master Chat readiness is used as the operator-surface prominence proxy.", browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("ux.operator_surfaces_prominent"));
-  addFinding(findings, "ux.snapshot_freshness", snapshotAgeHours == null ? "warning" : snapshotAgeHours <= 24 ? "pass" : snapshotAgeHours <= 72 ? "warning" : "failing", snapshotAgeHours == null ? "No browser-side snapshot has been captured." : `Browser snapshot age ${snapshotAgeHours.toFixed(1)}h.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("ux.snapshot_freshness"));
+  addFinding(findings, "ux.snapshot_freshness", snapshotAgeHours == null ? "warning" : snapshotAgeHours <= config.snapshotStaleHours ? "pass" : snapshotAgeHours <= config.snapshotStaleHours * 3 ? "warning" : "failing", snapshotAgeHours == null ? "No browser-side snapshot has been captured." : `Browser snapshot age ${snapshotAgeHours.toFixed(1)}h against threshold ${config.snapshotStaleHours}h.`, browserSnapshot ? "browser_snapshot" : "inference", suppressions.has("ux.snapshot_freshness"));
 
   addFinding(findings, "efficiency.budget_posture_fit", zeroBudgetAgents.length === 0 || dormantSkeleton ? "pass" : zeroBudgetAgents.length <= 2 ? "warning" : "failing", dormantSkeleton ? "Zero-budget posture is currently intentional for a paused org skeleton." : `${zeroBudgetAgents.length} of ${agents.length} agents currently have zero budget ceilings.`, "sdk", suppressions.has("efficiency.budget_posture_fit"));
   addFinding(findings, "efficiency.not_overbuilt", agents.length <= 12 ? "pass" : "warning", `${agents.length} agents currently defined.`, "sdk", suppressions.has("efficiency.not_overbuilt"));
@@ -454,7 +459,7 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
       const existing = findExistingOptimizerIssue(snapshot, finding.id);
       return {
         key: finding.id,
-        title: `[Setup Optimizer] ${finding.title}`,
+        title: `${config.issueTitlePrefix} ${finding.title}`,
         axis: finding.axis,
         severity: finding.severity,
         whyItMatters: `${finding.description}\n\nEvidence: ${finding.evidence}`,
@@ -487,7 +492,11 @@ function evaluateCompany(snapshot: WorkerCompanySnapshot, companyState: Awaited<
   };
 }
 
-export async function analyzeCompany(ctx: PluginContext, companyId: string): Promise<CompanyOptimizationReport> {
+export async function analyzeCompany(
+  ctx: PluginContext,
+  companyId: string,
+  config: OptimizerConfig,
+): Promise<CompanyOptimizationReport> {
   const company = await ctx.companies.get(companyId);
   if (!company) {
     throw new Error(`Company '${companyId}' not found`);
@@ -496,12 +505,12 @@ export async function analyzeCompany(ctx: PluginContext, companyId: string): Pro
     buildWorkerCompanySnapshot(ctx, company),
     loadCompanyOptimizerState(ctx, companyId),
   ]);
-  return evaluateCompany(snapshot, companyState);
+  return evaluateCompany(snapshot, companyState, config);
 }
 
-export async function analyzePortfolio(ctx: PluginContext) {
+export async function analyzePortfolio(ctx: PluginContext, config: OptimizerConfig) {
   const companies = await listAll((offset, limit) => ctx.companies.list({ offset, limit }));
-  const reports = await Promise.all(companies.map((company) => analyzeCompany(ctx, company.id)));
+  const reports = await Promise.all(companies.map((company) => analyzeCompany(ctx, company.id, config)));
   return {
     checkedAt: new Date().toISOString(),
     companies: reports.map((report) => ({

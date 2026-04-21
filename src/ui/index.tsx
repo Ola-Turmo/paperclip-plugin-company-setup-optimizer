@@ -463,6 +463,7 @@ export function CompanySetupOptimizerPage(_props: PluginPageProps) {
 }
 
 export function OptimizerSettingsPage() {
+  const config = usePluginData<{ snapshotStaleHours: number; autoIssueThreshold: string; issueTitlePrefix: string }>("optimizerConfig", {});
   return (
     <div style={{ display: "grid", gap: 16, padding: 16 }}>
       <div style={CARD}>
@@ -475,6 +476,13 @@ export function OptimizerSettingsPage() {
           <li>browser-side snapshots for plugins, secrets, company skills, connectors, and agent skill details</li>
           <li>native Paperclip issues only for issue-worthy findings</li>
         </ul>
+        {config.data ? (
+          <div style={{ marginTop: 12, color: "#475569" }}>
+            Snapshot stale threshold: <strong>{config.data.snapshotStaleHours}h</strong><br />
+            Automatic issue threshold: <strong>{config.data.autoIssueThreshold}</strong><br />
+            Issue title prefix: <strong>{config.data.issueTitlePrefix}</strong>
+          </div>
+        ) : null}
       </div>
     </div>
   );

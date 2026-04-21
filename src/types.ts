@@ -229,3 +229,9 @@ export interface OptimizerCompanyState {
   suppressedFindingIds: string[];
   materializedIssues: Record<string, string>;
 }
+
+export interface OptimizerConfig {
+  snapshotStaleHours: number;
+  autoIssueThreshold: "off" | "critical" | "high";
+  issueTitlePrefix: string;
+}
